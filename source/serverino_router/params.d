@@ -1,38 +1,20 @@
-module serverino_params;
+module serverino_router.params;
 
-import std.typecons;
-import std.conv;
+import std.typecons : Nullable, nullable;
+import std.conv : to;
 import std.traits;
-import std.meta;
-import std.logger;
+import std.meta : AliasSeq;
+//import std.logger;
 import std.algorithm.searching : canFind;
-import std.datetime : Clock, UTC, SysTime;
-import std.string;
+//import std.datetime : Clock, UTC, SysTime;
+import std.string : strip, split, join, empty;
 import std.json;
 
 import serverino;
 import json_serialization;
 
-public import http_status;
-
-alias Routes = void function(Request, Output)[string];
-alias HandlerFunc = void function(Request, Output);
-
 // These will be filled once the routes are defined
 string[string] pathParams;
-
-// To track the request duration during debug mode
-SysTime startTime;
-
-// Below routes will be filled if Route helpers are used.
-Routes postStaticRoutes = null;
-Routes postRoutes = null;
-Routes putStaticRoutes = null;
-Routes putRoutes = null;
-Routes getStaticRoutes = null;
-Routes getRoutes = null;
-Routes deleteStaticRoutes = null;
-Routes deleteRoutes = null;
 
 /// UDA.
 struct paramName
@@ -41,32 +23,6 @@ struct paramName
 }
 
 public enum ignoreParam;  /// UDA. struct members with @ignoreParam will be ignored while parsing params 
-
-/* Utility function to set the content type
- * ```d
- * output.setContentType("application/json");
- * ```
- */
-void setContentType(Output output, string type)
-{
-    output.addHeader("Content-Type", type);
-}
-
-/* Utility function to write JSON to output
- * ```d
- * @endpoint @route!"/ping"
- * void pingHandler(Request request, Output output)
- * {
- *     output.writeJsonBody(["ok": true]);
- * }
- * ```
- */
-void writeJsonBody(T)(Output output, T data, HttpStatus status = HttpStatus.ok)
-{
-    output.status = status;
-    output.setContentType("application/json");
-    output.write(data.serializeToJSONValueString);
-}
 
 bool validParamType(string param, string type)
 {
@@ -145,123 +101,6 @@ Nullable!(string[string]) matchedPathParams(string pattern, string path)
     }
 
     return params.nullable;
-}
-
-bool pathMatch(const(Request) req, string pattern)
-{
-    auto data = matchedPathParams(pattern, req.path);
-
-    if (!data.isNull)
-        pathParams = data.get;
-
-    return !data.isNull;
-}
-
-/* Define the post route in worker's scope.
- *
- * ```d
- * @onWorkerStart void handleWorkerStart()
- * {
- *   defineRoutes;
- *   // Other things in Worker
- * }
- *
- * void defineRoutes()
- * {
- *     postRoute!"/api/v1/folders"(&createFolderHandler);
- *     postRoute!"/api/v1/folders/:id:long/notes"(&createNoteHandler);
- * }
- * ```
- */
-void postRoute(string pattern)(HandlerFunc handler)
-{
-    static if(pattern.canFind(":") || pattern.canFind("*"))
-        postRoutes[pattern] = handler;
-    else
-        postStaticRoutes[pattern] = handler;
-}
-
-/* Refer postRoute for usage.
- *
- * ```d
- * putRoute!"/api/v1/folders/:id:long"(&editFolderHandler);
- * ```
- */
-void putRoute(string pattern)(HandlerFunc handler)
-{
-    static if(pattern.canFind(":") || pattern.canFind("*"))
-        putRoutes[pattern] = handler;
-    else
-        putStaticRoutes[pattern] = handler;
-}
-
-/* Refer postRoute for usage.
- *
- * ```d
- * getRoute!"/api/v1/folders"(&listFoldersHandler);
- * ```
- */
-void getRoute(string pattern)(HandlerFunc handler)
-{
-    static if(pattern.canFind(":") || pattern.canFind("*"))
-        getRoutes[pattern] = handler;
-    else
-        getStaticRoutes[pattern] = handler;
-}
-
-/* Refer postRoute for usage.
- *
- * ```d
- * deleteRoute!"/api/v1/folders/:id:long"(&deleteFolderHandler);
- * ```
- */
-void deleteRoute(string pattern)(HandlerFunc handler)
-{
-    static if(pattern.canFind(":") || pattern.canFind("*"))
-        deleteRoutes[pattern] = handler;
-    else
-        deleteStaticRoutes[pattern] = handler;
-}
-
-void findRouteHandler(Request request, Output output, Routes staticRoutes, Routes routes)
-{
-    auto handler = request.path in staticRoutes;
-    if (handler !is null)
-        return (*handler)(request, output);
-
-    foreach(route; routes.byKeyValue)
-    {
-        if (request.pathMatch(route.key))
-            return (*(route.value))(request, output);
-    }
-}
-
-void setStartTime()
-{
-    // Set only if no other routes initialized startTime
-    if (startTime == SysTime())
-        startTime = Clock.currTime(UTC());
-}
-
-@endpoint
-void routesHandler(Request request, Output output)
-{
-    setStartTime;
-
-    if (request.method == Request.Method.Post)
-        findRouteHandler(request, output, postStaticRoutes, postRoutes);
-    else if (request.method == Request.Method.Put)
-        findRouteHandler(request, output, putStaticRoutes, putRoutes);
-    else if (request.method == Request.Method.Get)
-        findRouteHandler(request, output, getStaticRoutes, getRoutes);
-    else if (request.method == Request.Method.Delete)
-        findRouteHandler(request, output, deleteStaticRoutes, deleteRoutes);
-
-    debug
-    {
-        auto duration = (Clock.currTime(UTC()) - startTime);
-        tracef("Response %s %s - %s (%s)", request.method, request.path, output.status, duration.toString);
-    }
 }
 
 string getParamName(T, string member)()
@@ -373,12 +212,12 @@ T parseParams(T)(Request req)
     static foreach(idx, fieldName; fieldNames)
     {
         static if (!isParamIgnored!(T, fieldName))
-        {
+        {{
             // Param name same as memberName unless @paramName
             // attribute added to the member.
             enum name = getParamName!(T, fieldName);
 
-            static if(__traits(hasMember, __traits(getMember, params, memberName), "isNull"))
+            static if(__traits(hasMember, __traits(getMember, params, fieldName), "isNull"))
                 enum type = nullableType!(fieldTypes[idx]);
             else
                 enum type = fieldTypes[idx].stringof;
@@ -406,8 +245,7 @@ T parseParams(T)(Request req)
                     throw new ParamsParseException("Failed to parse \"` ~ name ~ `\". Invalid content");
                 }
             `);
-        }
-
+        }}
     }
 
     return params;

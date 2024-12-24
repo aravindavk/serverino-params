@@ -1,0 +1,6 @@
+name "test_server"
+description "Serverino Router test Server"
+authors "Aravinda VK"
+copyright "Copyright © 2024, Aravinda VK"
+license "MIT"
+dependency "serverino-router" path="../"

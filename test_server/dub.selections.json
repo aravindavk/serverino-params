@@ -3,6 +3,7 @@
 	"versions": {
 		"http-status-codes": "0.1.0",
 		"json-serialization": "0.1.0",
-		"serverino": "0.7.18"
+		"serverino": "0.7.13+commit.7.g31e6920",
+		"serverino-router": {"path":"../"}
 	}
 }
